@@ -16,6 +16,16 @@ ANNOTATION_HEIGHT_AUGMENT_FRACTION = 1.4
 # Interval determining if an action is a tap or a swipe.
 _SWIPE_DISTANCE_THRESHOLD = 0.04
 
+def yx_in_bounding_boxes(
+       yx, bounding_boxes
+):
+  return _yx_in_bounding_boxes(yx, bounding_boxes)
+
+def resize_annotation_bounding_boxes(
+    annotation_positions, annotation_width_augment_fraction,
+    annotation_height_augment_fraction):
+  return _resize_annotation_bounding_boxes(annotation_positions, annotation_width_augment_fraction,
+    annotation_height_augment_fraction)
 
 def _yx_in_bounding_boxes(
     yx, bounding_boxes
@@ -56,7 +66,7 @@ def _resize_annotation_bounding_boxes(
     annotation_positions: Array of shape (N, 4), where each row represents the
       (y, x, height, width) of the bounding boxes.
     annotation_width_augment_fraction: The fraction to augment the box widths,
-      E.g., 1.4 == 240% total increase.
+      E.g., 1.4 == 240% total.
     annotation_height_augment_fraction: Same as described for width, but for box
       height.
 

@@ -2,5 +2,9 @@ transformers[torch]
 jax[cpu]
 rich
 evaluate
+torch
 rouge_score
-tensorflow
+tensorflow >= 2.14.0
+numpy >= 1.24.1
+pandas >= 1.1.5
+matplotlib >= 3.6.1
