@@ -21,6 +21,7 @@ from matplotlib import patches
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+from numba import cuda
 
 import action_type
 
@@ -55,6 +56,7 @@ def _decode_image(
   Returns:
     Decoded and reshaped image tensor.
   """
+  
   image = tf.io.decode_raw(
       example.features.feature['image/encoded'].bytes_list.value[0],
       out_type=tf.uint8,
@@ -189,6 +191,7 @@ def plot_example(
     show_annotations = False,
     show_action = False,
     ax = None,
+    image = None,
 ):
   """Plots a visualization of the given example.
 
@@ -206,7 +209,8 @@ def plot_example(
   image_height = example.features.feature['image/height'].int64_list.value[0]
   image_width = example.features.feature['image/width'].int64_list.value[0]
   image_channels = example.features.feature['image/channels'].int64_list.value[0]
-  image = _decode_image(example, image_height, image_width, image_channels)
+  if image is None:
+    image = _decode_image(example, image_height, image_width, image_channels)
 
   if ax is None:
     _, ax = plt.subplots(figsize=(8, 8))
@@ -315,6 +319,7 @@ def plot_episode(
     episode,
     show_annotations = False,
     show_actions = False,
+    image_dict = None,
 ):
   """Plots a visualization of the given episode.
 
@@ -328,18 +333,31 @@ def plot_episode(
   n_cols = min(ep_len, _NUM_EXS_PER_ROW)
   n_rows = 1 + (ep_len - 1) // n_cols
   fig, axs = plt.subplots(n_rows, n_cols, figsize=(30, n_rows * 10))
-  axs = axs.flatten()
+    # 检查 axs 是否为单个对象
+  if not isinstance(axs, (list, np.ndarray)):
+      axs = [axs]
+  else:
+      axs = axs.flatten()
   goal = ''
   i = 0
   for i, ex in enumerate(episode):
     ep_id = ex.features.feature['episode_id'].bytes_list.value[0].decode('utf-8')
     goal = ex.features.feature['goal_info'].bytes_list.value[0].decode('utf-8')
-    plot_example(
-        ex,
-        show_annotations=show_annotations,
-        show_action=show_actions,
-        ax=axs[i],
-    )
+    if image_dict == None:
+      plot_example(
+          ex,
+          show_annotations=show_annotations,
+          show_action=show_actions,
+          ax=axs[i],
+      )
+    else:
+        plot_example(
+          ex,
+          show_annotations=show_annotations,
+          show_action=show_actions,
+          ax=axs[i],
+          image = image_dict.get(str(i), None),
+        )
 
   for j in range(i + 1, len(axs)):
     ax = axs[j]
@@ -351,7 +369,10 @@ def plot_episode(
       y=1.0,
   )
   plt.tight_layout()
-  fig.savefig(f'dataset/steps_desc/{ep_id}_{goal}.png') 
+  try:
+    fig.savefig(f'dataset/steps_desc/{ep_id}_{goal}.png') 
+  except Exception as e:
+    fig.savefig(f'dataset/steps_desc/{ep_id}.png') 
 
 
 def plot_episode_from_stored(
@@ -394,4 +415,7 @@ def plot_episode_from_stored(
       y=1.0,
   )
   plt.tight_layout()
-  fig.savefig(f'dataset/steps_desc/{episode_id}_{goal}.png') 
+  try:
+    fig.savefig(f'dataset/steps_desc/{episode_id}_{goal}.png') 
+  except Exception as e:
+    fig.savefig(f'dataset/steps_desc/{episode_id}.png') 
