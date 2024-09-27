@@ -911,7 +911,7 @@ class Feature_Extractor:
             elif direction == 'up':
                 target_list.insert(0, target_seed)
             target_box = bounding_boxes[target_seed]
-            max_top, max_left, max_height, extend_width = target_box
+            max_top, max_left, mean_height, extend_width = target_box
 
             # STEP 3: Find horizontal row neighbor candidates
             row_neighbors = [(target_seed, target_box)]
@@ -932,16 +932,16 @@ class Feature_Extractor:
             # Find neighbors on both sides of the target element
 
             # Access neighbors to the right of target_index
-            max_top, max_left, max_bottom, max_right = target_box[0], target_box[1], target_box[0] + target_box[2], target_box[1] + target_box[3]
+            mean_top, max_left, mean_bottom, max_right = target_box[0], target_box[1], target_box[0] + target_box[2], target_box[1] + target_box[3]
             left_box = target_box
             insert_pos = 1
+            count = 1
             for right_index in range(target_index + 1, len(row_neighbors)):
                 right_neighbor_index, right_neighbor_box = row_neighbors[right_index]
 
                 # Calculate the distance between the left side of the right element and the right side of the target element
-                distance_right = right_neighbor_box[1] - (left_box[1] + left_box[3])
-
-                if distance_right < 1.2 * max_height:
+                distance_right = right_neighbor_box[1] - (left_box[1] + left_box[3])                
+                if distance_right < 1.2 * mean_height:
                     if direction == 'bidirec':
                         target_list.append(right_neighbor_index)
                     elif direction == 'up':
@@ -950,13 +950,13 @@ class Feature_Extractor:
                     else:
                         target_list.append(right_neighbor_index)
                     visited_seed_list.append(right_neighbor_index)
-                    left_box = right_neighbor_box
-                    max_height = max(max_height, right_neighbor_box[2])
-
+                    left_box = right_neighbor_box                    
+                    mean_height = (mean_height*count+right_neighbor_box[2])/(count+1)
                     # Update the bounding box parameters
-                    max_top = min(max_top, right_neighbor_box[0])
-                    max_bottom = max(max_bottom, right_neighbor_box[0] + right_neighbor_box[2])
+                    mean_top = (mean_top*count+right_neighbor_box[0])/ (count+1)
+                    mean_bottom =(mean_bottom * count+ right_neighbor_box[0] + right_neighbor_box[2])/ (count+1)
                     max_right = right_neighbor_box[1] + right_neighbor_box[3]
+                    count += 1
                 else:
                     break  # No need to continue if the distance exceeds the threshold
 
@@ -969,7 +969,7 @@ class Feature_Extractor:
                 # Calculate the distance between the right side of the left element and the left side of the target element
                 distance_left = right_box[1] - (left_neighbor_box[1] + left_neighbor_box[3])
 
-                if distance_left < 1.2 * max_height:
+                if distance_left < 1.2 * mean_height:
                     if direction == 'bidirec':
                         target_list.insert(0, left_neighbor_index)
                     elif direction == 'down':
@@ -978,15 +978,17 @@ class Feature_Extractor:
                         target_list.insert(0, left_neighbor_index)
                     visited_seed_list.append(left_neighbor_index)
                     right_box = left_neighbor_box
-                    max_height = max(max_height, left_neighbor_box[2])
+                    mean_height = (mean_height*count+left_neighbor_box[2])/(count+1)
+                    
                     # Update the bounding box parameters
-                    max_top = min(max_top, left_neighbor_box[0])
-                    max_bottom = max(max_bottom, left_neighbor_box[0] + left_neighbor_box[2])
+                    mean_top = (mean_top*count + left_neighbor_box[0])/ (count+1)
+                    max_bottom = (mean_bottom*count + left_neighbor_box[0] + left_neighbor_box[2])/ (count+1)
                     max_left = left_neighbor_box[1]
+                    count += 1
                 else:
                     break  # No need to continue if the distance exceeds the threshold
 
-            line_bounding_box = [max_top, max_left, max_bottom - max_top, max_right - max_left]
+            line_bounding_box = [mean_top, max_left, mean_bottom - mean_top, max_right - max_left]
             visited_seed_list.append(target_seed)
 
             # STEP 4: Find vertical neighbors
@@ -995,7 +997,7 @@ class Feature_Extractor:
                     box_center_y = box[0] + box[2] / 2
                     line_center_y = line_bounding_box[0] + line_bounding_box[2] / 2
 
-                    if abs(box_center_y - line_center_y) < 2 * max_height:
+                    if abs(box_center_y - line_center_y) < 2.5 * mean_height:
                         overlap_x = min(box[1] + box[3], line_bounding_box[1] + line_bounding_box[3]) - max(box[1], line_bounding_box[1])
                         
                         if overlap_x > 0:

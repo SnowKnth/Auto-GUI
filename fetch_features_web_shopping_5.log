@@ -1,0 +1,8 @@
+2024-07-20 23:19:00,717 INFO Unable to initialize backend 'rocm': module 'jaxlib.xla_extension' has no attribute 'GpuAllocatorConfig'
+2024-07-20 23:19:00,719 INFO Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+2024-07-20 23:45:04,136 ERROR Error: 'Axes' object has no attribute 'flatten'
+2024-07-27 19:45:18,586 INFO Unable to initialize backend 'rocm': module 'jaxlib.xla_extension' has no attribute 'GpuAllocatorConfig'
+2024-07-27 19:45:18,591 INFO Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+2024-07-28 01:54:13,224 INFO Task Impossible: 12456122979622041685
+2024-07-29 10:15:23,215 INFO Unable to initialize backend 'rocm': module 'jaxlib.xla_extension' has no attribute 'GpuAllocatorConfig'
+2024-07-29 10:15:23,249 INFO Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
