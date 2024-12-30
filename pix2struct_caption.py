@@ -37,7 +37,7 @@ def set_tf():
             # tf.config.experimental.set_visible_devices(gpus[6], 'GPU')
             tf.config.set_visible_devices(gpus[0], 'GPU')
             tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
-            tf.config.experimental.set_memory_growth(gpus[0], True)
+            tf.config.experimental.set_memory_growth(gpus[0], True) #默认情况下，TensorFlow 会占用所有 GPU 的显存。可以通过以下方式限制显存占用
             tf.config.experimental.set_virtual_device_configuration(
             gpus[0],
             [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=4096)]

@@ -29,7 +29,7 @@ os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
 
 dataset_directories = {
     'general': 'android-in-the-wild/general/*',
-    'google_apps': 'android-in-the-wild/google_apps/*',
+    'google_apps': '../ex_data/android-in-the-wild/google_apps/*',
     #'google_apps': 'gs://gresearch/android-in-the-wild/google_apps/*',
     'install': 'android-in-the-wild/install/*',
     'single': 'android-in-the-wild/single/*',
@@ -507,11 +507,117 @@ class Feature_Extractor:
                 image = wc.mark_widget_for_wc(bbox=box,image=image,saveas_id=index)
                 wc.generate_widget_captioning(image, taskDesc=goal)
 
-    # For parallel widget_captioning
-    def parallel_generate_widgetcaptioning_for_dataset(self, args):
-        dataset_name, get_images, get_annotations, get_actions, rangePair, widget_captioning = args
-        result = self.generate_widgetcaptioning_for_dataset(self, dataset_name, get_images, get_annotations, get_actions, rangePair, widget_captioning)
-        return result
+    # --- From google directory : Generate steps_summary for dataset_name
+    def generate_steps_summary_for_dataset(self, dataset_name, get_images, get_annotations, get_actions, rangePair):
+        filename_to_store = f"dataset/steps_summary/{dataset_name}_episode_description_{rangePair[0]}_{rangePair[1]}.json"
+        wait_to_file_count = 0
+        wait_dict = []
+        already_marked = 0
+        already_marked_examp = 0
+        state_mark_file = f"dataset/steps_summary/{dataset_name}_mark_as_finish.json" #记录有效吗
+        state_mark_dict = {}
+            
+        num_parallel_reads = 1  # 或者根据您的系统情况进行调整
+        filenames = tf.io.gfile.glob(dataset_directories[dataset_name])
+        dataset = tf.data.TFRecordDataset(filenames, compression_type='GZIP', num_parallel_reads=num_parallel_reads).as_numpy_iterator()
+
+        # # 定义文件路径和参数
+        # filenames = tf.io.gfile.glob(dataset_directories[dataset_name])
+        # num_parallel_reads = 2  # 并行读取文件的线程数
+
+        # # 使用 interleave 并行读取文件并保持顺序
+        # dataset = tf.data.Dataset.from_tensor_slices(filenames)
+        # dataset = dataset.interleave(
+        #     lambda x: tf.data.TFRecordDataset(x, compression_type='GZIP'),
+        #     cycle_length=num_parallel_reads,  # 并行读取的文件数
+        #     block_length=1,  # 每个文件每次读取的记录数
+        #     num_parallel_calls=tf.data.AUTOTUNE,  # 显式设置并行调用
+        #     deterministic=True  # 保持顺序
+        # ).as_numpy_iterator()
+
+        episode = []
+        episode_id = None
+        total_screens = 0
+        episode_count = 0
+        previous_episode_id = None
+        
+        print('start')
+        
+        
+        try:
+            for index, d in enumerate(dataset):
+                try:
+                    ex = tf.train.Example()
+                    ex.ParseFromString(d)
+                    ep_id = ex.features.feature['episode_id'].bytes_list.value[0].decode('utf-8')
+                    # print(ep_id)
+                    # if (ep_id not in train_data) & (ep_id not in test_data):
+                    #     continue
+                    if previous_episode_id is None or ep_id != previous_episode_id:
+                        previous_episode_id = ep_id
+                        episode_count += 1
+                    #[]区间， [rangePair[0], rangePair[1]]
+                    if episode_count < rangePair[0]:
+                        continue
+                    if episode_count > rangePair[1]+1:
+                        break
+                
+                    if episode_id is None:
+                        episode_id = ep_id
+                        episode.append(ex)
+                    elif ep_id == episode_id:
+                        episode.append(ex)
+                    else:
+                        # save data
+                        try:
+                            output = self.parse_episode_ori_image(episode, get_images=get_images, get_annotations=get_annotations, get_actions=get_actions)
+                        except Exception as exc:
+                            print(exc)
+                            #  bad data point; init a new episode
+                        print(f"Episode {index}\n")
+                        # img_dict, data_dict = self.generate_episode_widgetcaptioning(episode_id, output, dataset_name, rangePair, widget_captioning)
+                        data_dict = self.generate_episode_description(episode_id, output, dataset_name, has_activity=False)
+                        
+                        if data_dict is not None:
+                            wait_to_file_count += 1
+                            wait_dict.append(data_dict)
+                            if (wait_to_file_count==50):                       
+                                self.append_to_json_file(filename_to_store, wait_dict)
+                                already_marked_examp = index # start again with already_marked_examp
+                                already_marked += 50
+                                wait_to_file_count = 0
+                                wait_dict = []
+                        
+                        # if img_dict is not None:
+                        # visualization_utils.plot_episode(episode, show_annotations=True, show_actions=True, image_dict=img_dict)
+                        total_screens += len(episode)
+                        # init a new episode
+                        episode_id = ep_id
+                        episode = [ex]
+                        
+                        # 清理内x存
+                        del output
+                        tf.keras.backend.clear_session()
+                        tf.compat.v1.reset_default_graph()
+                except Exception as exc:
+                    logging.error(f"Error: {exc}, at index {index}, skipping record.")
+                    traceback.print_exc()
+                    state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+                    self.append_to_json_file(state_mark_file, state_mark_dict)
+                    continue
+        except KeyboardInterrupt:
+            print("fetch_episode_ori_image检测到 Ctrl+C 中断！")
+            state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+            self.append_to_json_file(state_mark_file, state_mark_dict)
+            return total_screens
+        except Exception as exc:
+            logging.error(f"Error: {exc}")
+            traceback.print_exc()
+            state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+            self.append_to_json_file(state_mark_file, state_mark_dict)
+            return total_screens
+        print('generate_widgetcaptioning_for_dataset done!')
+        return total_screens       
     
     # --- From google directory : Generate widget caption for dataset_name
     def generate_widgetcaptioning_for_dataset(self, dataset_name, get_images, get_annotations, get_actions, rangePair, widget_captioning): 
@@ -575,7 +681,7 @@ class Feature_Extractor:
                             wait_to_file_count += 1
                             wait_dict.append(data_dict)
                             if (wait_to_file_count==50):                       
-                                append_to_json_file(filename_to_store, wait_dict)
+                                self.append_to_json_file(filename_to_store, wait_dict)
                                 already_marked_examp = index # start again with already_marked_examp
                                 already_marked += 50
                                 wait_to_file_count = 0
@@ -596,18 +702,18 @@ class Feature_Extractor:
                     logging.error(f"Error: {exc}, at index {index}, skipping record.")
                     traceback.print_exc()
                     state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-                    append_to_json_file(state_mark_file, state_mark_dict)
+                    self.append_to_json_file(state_mark_file, state_mark_dict)
                     continue
         except KeyboardInterrupt:
             print("fetch_episode_ori_image检测到 Ctrl+C 中断！")
             state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-            append_to_json_file(state_mark_file, state_mark_dict)
+            self.append_to_json_file(state_mark_file, state_mark_dict)
             return total_screens
         except Exception as exc:
             logging.error(f"Error: {exc}")
             traceback.print_exc()
             state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-            append_to_json_file(state_mark_file, state_mark_dict)
+            self.append_to_json_file(state_mark_file, state_mark_dict)
             return total_screens
         print('generate_widgetcaptioning_for_dataset done!')
         return total_screens
@@ -674,7 +780,7 @@ class Feature_Extractor:
         for key, value in all_parsed_episode.items():  # Add 'enumerate' to loop over the episodes
             episode_id = key
             episode = value
-            self.generate_episode_description(episode_id, episode, dataset_name)
+            self.generate_episode_description(episode_id, episode, dataset_name, has_activity=False)
             
     # --- From google directory : Generate desc for dataset_name             
     def generate_describe_for_dataset(self, dataset_name, get_images, get_annotations, get_actions):
@@ -709,7 +815,7 @@ class Feature_Extractor:
                             print(exc)
                             #  bad data point; init a new episode
                         print(f"Episode {index}\n")
-                        self.generate_episode_description(episode_id, output, dataset_name)
+                        self.generate_episode_description(episode_id, output, dataset_name, has_activity=False)
                         total_screens += len(episode)
                         # init a new episode
                         episode_id = ep_id
@@ -733,7 +839,7 @@ class Feature_Extractor:
         return total_screens
 
     # Tool function : Generate episode description for episode
-    def generate_episode_description(self, episode_id, episode, dataset_name):
+    def generate_episode_description(self, episode_id, episode, dataset_name, has_activity):
         '''Key func: Generate episode description for episode'''   
         steps = []
         task_possible = True
@@ -777,23 +883,45 @@ class Feature_Extractor:
                 task_possible = False
             else:
                 step = "Unknown Action"
-            steps.append(f"{activity}: {step}")
+            if has_activity:
+                steps.append(f"{activity}: {step}")
+            else:
+                steps.append(f"{step}")
         
         if task_possible:
             data_to_write = {
                 "episode_id": episode_id,
                 "goal": goal,
-                "steps": steps
+                "steps": self.post_process(steps)
             }
-            filename = f"dataset/steps_summary/{dataset_name}_episode_description_new.json"
-            # 将字典写入JSON文件
-            # 确保目录存在
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            with open(filename, 'a') as file:
-                json.dump(data_to_write, file, indent=4)  # indent参数用于美化输出
-            print(f"Data written to {filename}")
+            # filename = f"dataset/steps_summary/{dataset_name}_episode_description_latest.json"
+            # # 将字典写入JSON文件
+            # os.makedirs(os.path.dirname(filename), exist_ok=True)
+            # self.append_to_json_file(file_name=filename, new_data=data_to_write)
+            
+            # print(f"Data written to {filename}")
+            return data_to_write
         else:
             logging.info(f"Task Impossible: {episode_id}")
+            return None
+ 
+    # Tool function : post_process of steps
+    def post_process(self, steps):
+        '''Post process of steps'''
+        post_steps = []
+        last_step = 'Do nothing'
+        # "Press Home" "" 去除
+        # 两个连载一起的Input '...'内容合并        
+        # 两个连在一起的tap '...'完全一样的合并
+        for step in steps:
+            if step != last_step and step not in ('Press Home', '') and not (last_step.split()[0] == 'Input' and step.split()[0] == 'Input'):
+                post_steps.append(step)
+                last_step = step
+            elif (last_step.split()[0] == 'Input' and step.split()[0] == 'Input'):
+                post_steps[-1] = f"{post_steps[-1][:-1]} {step.split('\'',1)[1]}"
+                last_step = post_steps[-1]
+        return post_steps
+    
  
     # Tool function : Find the target widget and Return the action description     
     def get_action_widget(self, ep_id, ex, positions, touch_yx, index):
@@ -1110,16 +1238,26 @@ class Feature_Extractor:
         # (left, top, right, bottom)
         return [max(0,new_left)*width, max(0,new_top)*height, min(new_right,1)*width, min(new_bottom,1)*height]
    
-   
+# For parallel widget_captioning
+def parallel_generate_widgetcaptioning_for_dataset(args):
+    instance, dataset_name, get_images, get_annotations, get_actions, rangePair, widget_captioning = args
+    result = instance.generate_widgetcaptioning_for_dataset(dataset_name, get_images, get_annotations, get_actions, rangePair, widget_captioning)
+    return result
+
+# For parallel steps_summary extraction
+def parallel_generate_steps_summary_for_dataset(args):
+    instance, dataset_name, get_images, get_annotations, get_actions, rangePair = args
+    result = instance.generate_steps_summary_for_dataset(dataset_name, get_images, get_annotations, get_actions, rangePair)
+    return result
 
     
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='general')
+    parser.add_argument('--dataset', type=str, default='google_apps')
     parser.add_argument("--split_file", type=str, default="dataset/general_texts_splits.json")
     parser.add_argument('--output_dir', type=str, default='dataset/t5/general_parsed_episode_t5_clip')
-    parser.add_argument('--get_images', default=True, action='store_true')
-    parser.add_argument('--get_annotations', default=True, action='store_true')
+    parser.add_argument('--get_images', action='store_true') #提供--get_images则为true，默认false
+    parser.add_argument('--get_annotations', default=True, action='store_true') # True in all conditions
     parser.add_argument('--get_actions', default=True, action='store_true')
     
     args = parser.parse_args()
@@ -1182,9 +1320,14 @@ if __name__ == '__main__':
     # print(json.dumps(vars(args), indent=2, sort_keys=False))
     # generate_describe_for_dataset(args.dataset, args.get_images, args.get_annotations, args.get_actions, widget_captioning)
     
-    args = parse_args()
-    fetch_features = Feature_Extractor()
-    fetch_features.generate_describe_for_dataset(args.dataset, args.get_images, args.get_annotations, args.get_actions)
+    
+    
+    
+    
+    #by wxd #generate steps summary for dataset, need modify generate_describe_for_dataset for json output
+    # args = parse_args()
+    # fetch_features = Feature_Extractor()
+    # fetch_features.generate_describe_for_dataset(args.dataset, args.get_images, args.get_annotations, args.get_actions)
     
     
     
@@ -1209,14 +1352,30 @@ if __name__ == '__main__':
     
     
         
+        
+    #by wxd # parallel generate widget captioning for dataset    
     # args = parse_args()
+    # fetch_features = Feature_Extractor()
     # print('====Input Arguments====')
     # print(json.dumps(vars(args), indent=2, sort_keys=False))
     # cuda_device_count =  6
-    # args1 = [(args.dataset, args.get_images, args.get_annotations, args.get_actions, (5000*i+1, 5000*(i+1)), pix2struct_caption.widget_captioning([i+1]) ) for i in range(cuda_device_count)]
+    # args1 = [(fetch_features, args.dataset, args.get_images, args.get_annotations, args.get_actions, (5000*i+1, 5000*(i+1)), pix2struct_caption.widget_captioning([i+1]) ) for i in range(cuda_device_count)]
     # set_start_method('spawn', force=True)
     # with Pool(processes=cuda_device_count) as pool:
     #     results = pool.map(parallel_generate_widgetcaptioning_for_dataset, args1)
     
+    
+    
+    
+    # parallel generate steps summary for dataset    
+    args = parse_args()
+    fetch_features = Feature_Extractor()
+    print('====Input Arguments====')
+    print(json.dumps(vars(args), indent=2, sort_keys=False))
+    parallel_count =  16
+    args1 = [(fetch_features, args.dataset, args.get_images, args.get_annotations, args.get_actions, (40000*i+1, 40000*(i+1)) ) for i in range(parallel_count)]
+    set_start_method('spawn', force=True)
+    with Pool(processes=parallel_count) as pool:
+        results = pool.map(parallel_generate_steps_summary_for_dataset, args1)
     
     
