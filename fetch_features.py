@@ -2,6 +2,7 @@ import action_type, action_matching
 import numpy as np
 from tqdm import tqdm
 import json
+import jax
 import jax.numpy as jnp
 import argparse
 import pickle
@@ -40,6 +41,29 @@ dataset_directories = {
 #     'general': 'dataset/android-in-the-wild/general/*',
 #     'google_apps': 'dataset/android-in-the-wild/google_apps/*',
 # }
+
+
+def set_jax_devices(i: int):
+    try:
+        # 获取所有可用的 GPU 设备
+        gpus = jax.devices('gpu')
+        print(f"Available GPUs: {gpus}")
+
+        if not gpus:
+            print("No GPUs found. Falling back to CPU.")
+            jax.config.update('jax_default_device', jax.devices('cpu')[0])
+            return
+
+        if i >= len(gpus):
+            raise ValueError(f"GPU index {i} is out of range. Only {len(gpus)} GPUs are available (index starts from 0).")
+
+        # 指定默认使用的 GPU 设备
+        jax.config.update('jax_default_device', gpus[i])
+        print(f"Default device set to: GPU {i} ({gpus[i]})")
+
+    except RuntimeError as e:
+        print(f"Error initializing GPUs: {e}. Falling back to CPU.")
+        jax.config.update('jax_default_device', jax.devices('cpu')[0])
 
 def _decode_image(
     example,
@@ -514,8 +538,23 @@ class Feature_Extractor:
         wait_dict = []
         already_marked = 0
         already_marked_examp = 0
-        state_mark_file = f"dataset/steps_summary/{dataset_name}_mark_as_finish.json" #记录有效吗
+        state_mark_file = f"dataset/steps_summary/{dataset_name}_mark_as_finish_{rangePair[0]}_{rangePair[1]}.json" #记录有效吗
         state_mark_dict = {}
+        
+        # 创建一个独立的日志记录器
+        logger = logging.getLogger(f'Process_{rangePair[0]}_{rangePair[1]}')
+        logger.setLevel(logging.DEBUG)
+
+        # 创建一个文件处理器，将日志写入到不同的文件
+        log_file = f'dataset/steps_summary/{dataset_name}_{rangePair[0]}_{rangePair[1]}.log'
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        # 设置日志格式
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+
+        # 将处理器添加到日志记录器
+        logger.addHandler(file_handler)
             
         num_parallel_reads = 1  # 或者根据您的系统情况进行调整
         filenames = tf.io.gfile.glob(dataset_directories[dataset_name])
@@ -574,7 +613,7 @@ class Feature_Extractor:
                         except Exception as exc:
                             print(exc)
                             #  bad data point; init a new episode
-                        print(f"Episode {index}\n")
+                        # print(f"Episode index: {index}\n")
                         # img_dict, data_dict = self.generate_episode_widgetcaptioning(episode_id, output, dataset_name, rangePair, widget_captioning)
                         data_dict = self.generate_episode_description(episode_id, output, dataset_name, has_activity=False)
                         
@@ -587,6 +626,7 @@ class Feature_Extractor:
                                 already_marked += 50
                                 wait_to_file_count = 0
                                 wait_dict = []
+                                logger.info(f"Episode index: {index}, Episode count: {episode_count}")
                         
                         # if img_dict is not None:
                         # visualization_utils.plot_episode(episode, show_annotations=True, show_actions=True, image_dict=img_dict)
@@ -599,24 +639,27 @@ class Feature_Extractor:
                         del output
                         tf.keras.backend.clear_session()
                         tf.compat.v1.reset_default_graph()
+                        # del x, y  # 删除 Python 对象引用
+                        # gc.collect()  # 显式触发垃圾回收
+                        # jax.clear_backends()  # 清理 JAX 后端状态，并行时会有问题
                 except Exception as exc:
-                    logging.error(f"Error: {exc}, at index {index}, skipping record.")
+                    logger.exception(f"Error inside: {exc}, at index {index}, skipping record.")
                     traceback.print_exc()
-                    state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-                    self.append_to_json_file(state_mark_file, state_mark_dict)
+                    # state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+                    # self.append_to_json_file(state_mark_file, state_mark_dict)
                     continue
         except KeyboardInterrupt:
             print("fetch_episode_ori_image检测到 Ctrl+C 中断！")
-            state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-            self.append_to_json_file(state_mark_file, state_mark_dict)
+            # state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+            # self.append_to_json_file(state_mark_file, state_mark_dict)
             return total_screens
         except Exception as exc:
-            logging.error(f"Error: {exc}")
+            logger.exception(f"Error outside: {exc}")
             traceback.print_exc()
-            state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
-            self.append_to_json_file(state_mark_file, state_mark_dict)
+            # state_mark_dict[f'{rangePair[0]}_{rangePair[1]}'] = already_marked
+            # self.append_to_json_file(state_mark_file, state_mark_dict)
             return total_screens
-        print('generate_widgetcaptioning_for_dataset done!')
+        logger.info('generate_steps_summary_for_dataset done!')
         return total_screens       
     
     # --- From google directory : Generate widget caption for dataset_name
@@ -1246,7 +1289,8 @@ def parallel_generate_widgetcaptioning_for_dataset(args):
 
 # For parallel steps_summary extraction
 def parallel_generate_steps_summary_for_dataset(args):
-    instance, dataset_name, get_images, get_annotations, get_actions, rangePair = args
+    instance, dataset_name, get_images, get_annotations, get_actions, i, rangePair = args
+    set_jax_devices(i+1)
     result = instance.generate_steps_summary_for_dataset(dataset_name, get_images, get_annotations, get_actions, rangePair)
     return result
 
@@ -1370,10 +1414,12 @@ if __name__ == '__main__':
     # parallel generate steps summary for dataset    
     args = parse_args()
     fetch_features = Feature_Extractor()
+    pix2struct_caption.set_tf()
+    
     print('====Input Arguments====')
     print(json.dumps(vars(args), indent=2, sort_keys=False))
-    parallel_count =  16
-    args1 = [(fetch_features, args.dataset, args.get_images, args.get_annotations, args.get_actions, (40000*i+1, 40000*(i+1)) ) for i in range(parallel_count)]
+    parallel_count =  5
+    args1 = [(fetch_features, args.dataset, args.get_images, args.get_annotations, args.get_actions, i, (20000+40000*i+1, 20000+40000*(i+1)) ) for i in range(parallel_count)]
     set_start_method('spawn', force=True)
     with Pool(processes=parallel_count) as pool:
         results = pool.map(parallel_generate_steps_summary_for_dataset, args1)
